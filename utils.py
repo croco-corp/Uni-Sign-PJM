@@ -523,7 +523,31 @@ def get_args_parser():
     parser.add_argument("--max_length", default=256, type=int)
     
     # select dataset
-    parser.add_argument("--dataset", default="CSL_Daily", choices=['CSL_News', "CSL_Daily", "WLASL", "How2Sign", "OpenASL"])
+    parser.add_argument("--dataset", default="CSL_Daily", choices=['CSL_News', "CSL_Daily", "WLASL", "How2Sign", "OpenASL", "PJM"])
+
+    # wandb
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb_project", default="uni-sign", type=str)
+    parser.add_argument("--wandb_dir", default="./wandb_logs", type=str)
+
+    # extra eval metrics
+    parser.add_argument("--bertscore", action="store_true", help="Compute BERTScore during eval (requires bert_score)")
+    parser.add_argument("--num_examples", default=5, type=int, help="Number of reference/prediction examples to print during eval")
+
+    # PJM split selection
+    parser.add_argument("--pjm_split", default="si", choices=["si", "ms", "filtered"],
+                        help="Which PJM CSV split family to use: si (signer-independent), ms (multi-speaker), filtered")
+
+    # LoRA + selective freezing Phase 2
+    parser.add_argument("--lora", action="store_true", help="Wrap mt5_model with LoRA adapters")
+    parser.add_argument("--lora_rank", default=16, type=int)
+    parser.add_argument("--lora_alpha", default=32, type=int)
+    parser.add_argument("--lora_dropout", default=0.05, type=float)
+    parser.add_argument("--lora_target", default="q,v", type=str,
+                        help="Comma-separated target module names for LoRA (T5/MT5 uses q,k,v,o)")
+    parser.add_argument("--lora-ckpt", default="", type=str, help="Path to phase 2 checkpoint containing only LoRa weights; load after peft wrap")
+    parser.add_argument("--freeze_visual", action="store_true",
+                        help="Freeze pose fuser + STGCN + pose_proj (and RGB branch if active)")
     
     # select task
     parser.add_argument("--task", default="SLT", choices=['SLT', "ISLR", "CSLR"])

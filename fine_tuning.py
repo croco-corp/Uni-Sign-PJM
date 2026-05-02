@@ -3,7 +3,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from models import Uni_Sign
 import utils as utils
-from datasets import S2T_Dataset
+from datasets import S2T_Dataset, S2T_Dataset_PJM
 import os
 import time
 import argparse, json, datetime
@@ -16,16 +16,55 @@ from SLRT_metrics import translation_performance, islr_performance, wer_list
 from transformers import get_scheduler
 from config import *
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 def main(args):
     utils.init_distributed_mode_ds(args)
 
     print(args)
     utils.set_seed(args.seed)
 
+    if args.wandb and WANDB_AVAILABLE and utils.is_main_process():
+        os.makedirs(args.wandb_dir, exist_ok=True)
+        wandb.init(
+            project=args.wandb_project,
+            name=os.path.basename(args.output_dir),
+            config=vars(args),
+            dir=args.wandb_dir,
+        )
+
     print(f"Creating dataset:")
-        
-    train_data = S2T_Dataset(path=train_label_paths[args.dataset], 
-                             args=args, phase='train')
+    if args.dataset == "PJM":
+        suffix = {'si': '', 'ms': '_ms', 'filtered': '_filtered'}[args.pjm_split]
+        print(f"  PJM split family: {args.pjm_split} (suffix='{suffix}')")
+        train_data = S2T_Dataset_PJM(
+            path=f'../CrocoSign/data/split_train{suffix}.csv',
+            texts_path='../CrocoSign/data/texts_eng.h5',
+            args=args,
+            phase='train'
+        )
+        dev_data = S2T_Dataset_PJM(
+            path=f'../CrocoSign/data/split_val{suffix}.csv',
+            texts_path='../CrocoSign/data/texts_eng.h5',
+            args=args,
+            phase='val'
+        )
+        test_data =  S2T_Dataset_PJM(
+            path=f'../CrocoSign/data/split_test{suffix}.csv',
+            texts_path='../CrocoSign/data/texts_eng.h5',
+            args=args,
+            phase='test'
+        )
+
+    else: 
+        train_data = S2T_Dataset(path=train_label_paths[args.dataset], 
+                                args=args, phase='train')
+        test_data = S2T_Dataset(path=test_label_paths[args.dataset], 
+                        args=args, phase='test')
     print(train_data)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_data,shuffle=True)
     train_dataloader = DataLoader(train_data,
@@ -35,9 +74,7 @@ def main(args):
                                  sampler=train_sampler, 
                                  pin_memory=args.pin_mem,
                                  drop_last=True)
-        
-    test_data = S2T_Dataset(path=test_label_paths[args.dataset], 
-                            args=args, phase='test')
+
     print(test_data)
     # test_sampler = torch.utils.data.distributed.DistributedSampler(test_data,shuffle=False)
     test_sampler = torch.utils.data.SequentialSampler(test_data)
@@ -48,11 +85,20 @@ def main(args):
                                  sampler=test_sampler, 
                                  pin_memory=args.pin_mem)
 
-    if "How2Sign" not in args.dataset:
+    if "How2Sign" not in args.dataset and args.dataset != "PJM":
         dev_data = S2T_Dataset(path=dev_label_paths[args.dataset],
                                args=args, phase='dev')
         print(dev_data)
         # dev_sampler = torch.utils.data.distributed.DistributedSampler(dev_data,shuffle=False)
+        dev_sampler = torch.utils.data.SequentialSampler(dev_data)
+        dev_dataloader = DataLoader(dev_data,
+                                    batch_size=args.batch_size,
+                                    num_workers=args.num_workers,
+                                    collate_fn=dev_data.collate_fn,
+                                    sampler=dev_sampler,
+                                    pin_memory=args.pin_mem)
+    elif args.dataset == "PJM":
+        print(dev_data)
         dev_sampler = torch.utils.data.SequentialSampler(dev_data)
         dev_dataloader = DataLoader(dev_data,
                                     batch_size=args.batch_size,
@@ -78,11 +124,53 @@ def main(args):
         print('***********************************')
         state_dict = torch.load(args.finetune, map_location='cpu')['model']
 
-        ret = model.load_state_dict(state_dict, strict=True)
+        ret = model.load_state_dict(state_dict, strict=False) # in phase 3 comeback to True
         print('Missing keys: \n', '\n'.join(ret.missing_keys))
         print('Unexpected keys: \n', '\n'.join(ret.unexpected_keys))
     
     model_without_ddp = model
+    if args.freeze_visual:
+        visual_attrs = [
+            "proj_linear", "gcn_modules", "fusion_gcn_modules",
+            "part_para", "pose_proj",
+            "rgb_support_backbone", "rgb_proj",
+            "fusion_pose_rgb_linear", "fusion_pose_rgb_DA", "fusion_gate",
+        ]
+        frozen_count = 0
+        for attr in visual_attrs:
+            mod = getattr(model, attr, None)
+            if mod is None:
+                continue
+            if isinstance(mod, torch.nn.Parameter):
+                mod.requires_grad = False
+                frozen_count += 1
+            else:
+                for p in mod.parameters():  
+                    p.requires_grad = False
+                    frozen_count += 1
+        print(f"[phase2] visual path frozen ({frozen_count} param tensors)")
+
+    if args.lora:
+        from peft import LoraConfig, get_peft_model, TaskType
+        targets = [t.strip() for t in args.lora_target.split(",") if t.strip()]
+        lora_cfg = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=targets,
+            lora_dropout=args.lora_dropout,
+            bias='none',
+            task_type=TaskType.SEQ_2_SEQ_LM,
+        )
+        model.mt5_model = get_peft_model(model.mt5_model, lora_cfg)
+        model.mt5_model.print_trainable_parameters()
+        print(f"[phase2] mT5 wrapped with LoRA targets={targets}")
+
+        if args.lora_ckpt:
+            lora_state = torch.load(args.lora_ckpt, map_location='cpu')['model']
+            ret = model.load_state_dict(lora_state, strict=False)
+            print(f"[phase2] loaded LoRA ckpt: missing={len(ret.missing_keys)}, unexpected={len(ret.unexpected_keys)}")
+
+        
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -114,11 +202,17 @@ def main(args):
         if utils.is_main_process():
             if args.task != "ISLR" and "How2Sign" not in args.dataset:
                 print("📄 dev result")
-                evaluate(args, dev_dataloader, model, model_without_ddp, phase='dev')
+                dev_stats = evaluate(args, dev_dataloader, model, model_without_ddp, phase='dev')
+                if args.wandb and WANDB_AVAILABLE:
+                    wandb.log({f'dev_{k}': v for k, v in dev_stats.items()})
             print("📄 test result")
-            evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
+            test_stats = evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
+            if args.wandb and WANDB_AVAILABLE:
+                wandb.log({f'test_{k}': v for k, v in test_stats.items()})
 
-        return 
+        if args.wandb and WANDB_AVAILABLE and utils.is_main_process():
+            wandb.finish()
+        return
     print(f"Start training for {args.epochs} epochs")
 
     for epoch in range(0, args.epochs):
@@ -137,7 +231,13 @@ def main(args):
         # single gpu inference
         if utils.is_main_process():
             test_stats = evaluate(args, dev_dataloader, model, model_without_ddp, phase='dev')
-            evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
+            if epoch == args.epochs - 1:
+                final_test_stats = evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
+                if args.wandb and WANDB_AVAILABLE:
+                    wandb.log({f'final_test_{k}': v for k, v in final_test_stats.items()})
+                if args.output_dir:
+                    with (output_dir / "log.txt").open("a") as f:
+                        f.write(json.dumps({f'final_test_{k}': v for k, v in final_test_stats.items()}) + "\n")
 
             if args.task == "SLT":
                 if max_accuracy < test_stats["bleu4"]:
@@ -186,10 +286,15 @@ def main(args):
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
+            if args.wandb and WANDB_AVAILABLE:
+                wandb.log(log_stats)
         
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
+    if args.wandb and WANDB_AVAILABLE and utils.is_main_process():
+        wandb.finish()
 
 def train_one_epoch(args, model, data_loader, optimizer, epoch):
     model.train()
@@ -225,6 +330,13 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
             
         metric_logger.update(loss=loss_value)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        if args.wandb and WANDB_AVAILABLE and utils.is_main_process():
+            wandb.log({"train_loss_step": loss_value, "lr_step": optimizer.param_groups[0]["lr"]})
+
+        if args.quick_break > 0 and (step + 1) >= args.quick_break:
+            print(f"[quick_break] stopping epoch after {step+1} steps (quick_break={args.quick_break})")
+            break
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -289,6 +401,27 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
         for k,v in bleu_dict.items():
             metric_logger.meters[k].update(v)
         metric_logger.meters['rouge'].update(rouge_score)
+
+        n_ex = min(args.num_examples, len(tgt_pres))
+        if n_ex > 0:
+            print(f'--- {n_ex} example translations ({phase}) ---')
+            for i in range(n_ex):
+                name_i = tgt_name[i] if i < len(tgt_name) else f'idx{i}'
+                print(f'[{name_i}]')
+                print(f'  ref: {tgt_refs[i]}')
+                print(f'  hyp: {tgt_pres[i]}')
+            print('--- end examples ---')
+
+        if args.bertscore:
+            try:
+                from bert_score import score as bert_score_fn
+                P, R, F1 = bert_score_fn(tgt_pres, tgt_refs, lang='en', rescale_with_baseline=False, verbose=False)
+                bertscore_f1 = float(F1.mean().item()) * 100
+                print(f'BERTScore F1: {bertscore_f1:.2f}')
+                metric_logger.meters['bertscore_f1'].update(bertscore_f1)
+            except ImportError:
+                print('[warn] --bertscore set but `bert_score` package is not installed; skipping')
+
         if args.eval and (args.dataset == 'How2Sign' or args.dataset == 'OpenASL'):
             # BLEURT # follow GloFE
             # Due to the long processing time, only --eval will be executed.
@@ -296,7 +429,6 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             checkpoint = "./BLEURT-20"
             scorer = score.BleurtScorer(checkpoint)
             scores_bleurt = scorer.score(references=tgt_refs[:], candidates=tgt_pres[:])
-            # assert isinstance(scores, list) and len(scores) == 1
             print('BLEURT:', sum(scores_bleurt)/len(scores_bleurt))
 
     elif args.task == "ISLR":
@@ -314,13 +446,30 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
     # metric_logger.synchronize_between_processes()
     
     if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
-        with open(args.output_dir+f'/{phase}_tmp_pres.txt','w') as f:
+        pres_path = args.output_dir + f'/{phase}_tmp_pres.txt'
+        refs_path = args.output_dir + f'/{phase}_tmp_refs.txt'
+        with open(pres_path, 'w') as f:
             for i in range(len(tgt_pres)):
                 f.write(f"sample: {tgt_name[i]}, prediction: " + tgt_pres[i]+'\n')
-        with open(args.output_dir+f'/{phase}_tmp_refs.txt','w') as f:
+        with open(refs_path, 'w') as f:
             for i in range(len(tgt_refs)):
                 f.write(f"sample: {tgt_name[i]}, ground-truth: " + tgt_refs[i]+'\n')
-        
+
+        if args.wandb and WANDB_AVAILABLE and args.task == "SLT":
+            n_ex = min(args.num_examples, len(tgt_pres))
+            ex_table = wandb.Table(columns=["name", "ref", "hyp"])
+            for i in range(n_ex):
+                ex_table.add_data(str(tgt_name[i]), tgt_refs[i], tgt_pres[i])
+            full_table = wandb.Table(columns=["name", "ref", "hyp"])
+            for i in range(len(tgt_pres)):
+                full_table.add_data(str(tgt_name[i]), tgt_refs[i], tgt_pres[i])
+            wandb.log({
+                f'{phase}_examples': ex_table,
+                f'{phase}_all_predictions': full_table,
+            })
+            wandb.save(pres_path, base_path=args.output_dir, policy='now')
+            wandb.save(refs_path, base_path=args.output_dir, policy='now')
+
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 if __name__ == '__main__':

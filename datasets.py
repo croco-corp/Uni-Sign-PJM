@@ -323,7 +323,7 @@ def load_support_rgb_dict(tmp, skeletons, confs, full_path, data_transform):
 
 # use split rgb video for save time
 def load_video_support_rgb(path, tmp):
-    vr = VideoReader(path, num_threads=1, ctx=cpu(0))
+    vr = VideoReader(path, num_threads=0, ctx=cpu(0))
     
     vr.seek(0)
     buffer = vr.get_batch(tmp).asnumpy()
@@ -666,3 +666,99 @@ class S2T_Dataset_online(Base_Dataset):
 
     def __str__(self):
         return f'#total {len(self)}'
+
+class S2T_Dataset_PJM(Base_Dataset):
+    def __init__(self, path, texts_path, args, phase):
+        super(S2T_Dataset_PJM, self).__init__()
+        self.args = args
+        self.rgb_support = args.rgb_support
+        self.max_length = args.max_length
+        self.phase = phase
+        self.pose_dir = pose_dirs["PJM"]
+
+        import pandas as pd
+        import h5py
+        import tarfile
+        import glob
+        df = pd.read_csv(path)
+        all_keys = df['key'].to_list()
+        missing = [k for k in all_keys if not os.path.exists(os.path.join(self.pose_dir, k + '.pkl'))]
+        if missing:
+            print(f"[PJM:{phase}] skipping {len(missing)} samples with missing pose pkl (e.g. {missing[:3]})")
+        missing_set = set(missing)
+        self.keys = [k for k in all_keys if k not in missing_set]
+        self.video_index = {}
+        self._tar_cache ={}
+        if self.rgb_support:
+            for tar_path in sorted(glob.glob('../CrocoSign/data/pjm_segments/*.tar')):
+                with tarfile.open(tar_path) as tar:
+                    for member in tar.getmembers():
+                        if member.name.endswith('.mp4'):
+                            key = member.name.replace('.mp4', '')
+                            self.video_index[key] = (tar_path, member.name)
+        
+        self.texts = h5py.File(texts_path, 'r')
+        self.rgb_dir = None
+        self.data_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    def __len__(self):
+        return len(self.keys)
+    
+    def _read_video_bytes(self, key):
+        import tarfile
+        tar_path, member_name = self.video_index[key]
+        tar = self._tar_cache.get(tar_path)
+        if tar is None:
+            tar = tarfile.open(tar_path)
+            self._tar_cache[tar_path] = tar
+        return tar.extractfile(member_name).read()
+
+    def __getitem__(self, index):
+        key = self.keys[index]
+        text = self.texts[key][()].decode('utf-8')
+        pose_sample, support_rgb_dict = self.load_pose(key + '.pkl')
+        return key, pose_sample, text, '', support_rgb_dict
+    
+
+    def load_pose(self, path):
+        pose = pickle.load(open(os.path.join(self.pose_dir, path.replace(".mp4", '.pkl')), 'rb'))
+            
+        if 'start' in pose.keys():
+            assert pose['start'] < pose['end']
+            duration = pose['end'] - pose['start']
+            start = pose['start']
+        else:
+            duration = len(pose['scores'])
+            start = 0
+                
+        if duration > self.max_length:
+            tmp = sorted(random.sample(range(duration), k=self.max_length))
+        else:
+            tmp = list(range(duration))
+        
+        tmp = np.array(tmp) + start
+            
+        skeletons = pose['keypoints']
+        confs = pose['scores']
+        skeletons_tmp = []
+        confs_tmp = []
+        for index in tmp:
+            skeletons_tmp.append(skeletons[index])
+            confs_tmp.append(confs[index])
+
+        skeletons = skeletons_tmp
+        confs = confs_tmp
+    
+        kps_with_scores = load_part_kp(skeletons, confs, force_ok=True)
+
+        support_rgb_dict = {}
+        if self.rgb_support:
+            import io
+            key = path.replace('.pkl', '')
+            full_path = io.BytesIO(self._read_video_bytes(key))
+            support_rgb_dict = load_support_rgb_dict(tmp, skeletons, confs, full_path, self.data_transform)
+            
+        return kps_with_scores, support_rgb_dict

@@ -42,4 +42,5 @@ pose_dirs = {
             "WLASL": "./dataset/WLASL/pose_format",
             "How2Sign": "./dataset/WLASL/pose_format",
             "OpenASL": "./dataset/WLASL/pose_format",
+            "PJM": "./dataset/PJM/pose_format",
 }

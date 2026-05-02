@@ -270,27 +270,53 @@ def sableu(references, hypotheses, tokenizer):
 def translation_performance(txt_ref, txt_hyp):
     from rouge import Rouge as SLT_Rouge
     rouge=SLT_Rouge()
-    scores = rouge.get_scores(txt_hyp, txt_ref, avg=True)
+    # `rouge` package crashes on empty strings; replace with placeholder token for its call only.
+    rouge_hyp = [h if h.strip() else '<empty>' for h in txt_hyp]
+    rouge_ref = [r if r.strip() else '<empty>' for r in txt_ref]
+    scores = rouge.get_scores(rouge_hyp, rouge_ref, avg=True)
     scores['rouge-l']['f'] = scores['rouge-l']['f']*100
-    
+
     tokenizer_args = '13a'
-    # print('Signature: BLEU+case.mixed+numrefs.1+smooth.exp+tok.%s+version.1.4.2' % tokenizer_args)
     sableu_dict = sableu(references=txt_ref, hypotheses=txt_hyp, tokenizer=tokenizer_args)
-    # print('BLEU', sableu_dict)
-    # print('Signature: chrF2+case.mixed+numchars.6+numrefs.1+space.False+version.1.4.2')
-    # print('Chrf', chrf(references=txt_ref, hypotheses=txt_hyp))
-   
+    sableu_dict['chrf'] = chrf(references=txt_ref, hypotheses=txt_hyp)
+
+    diag = translation_diagnostics(txt_ref, txt_hyp)
+    sableu_dict.update(diag)
+
     print(sableu_dict)
     print(f"Rouge: {scores['rouge-l']['f']:.2f}")
-   
-    # res = []
-    # for n in range(4):
-    #     res.append(f"{sableu_dict['bleu' + str(n + 1)]:.2f}")
-    # res.append(f"{scores['rouge-l']['f']:.2f}")
-    
-    # print(" & ".join(res))
 
     return sableu_dict, float(scores['rouge-l']['f'])
+
+
+def translation_diagnostics(txt_ref, txt_hyp):
+    """Cheap sanity signals about hypothesis distribution."""
+    n = max(len(txt_hyp), 1)
+    ref_lens = [len(r.split()) for r in txt_ref]
+    hyp_lens = [len(h.split()) for h in txt_hyp]
+
+    empty = sum(1 for h in txt_hyp if len(h.strip()) == 0)
+    very_short = sum(1 for l in hyp_lens if 0 < l <= 2)
+    avg_ref = float(np.mean(ref_lens)) if ref_lens else 0.0
+    avg_hyp = float(np.mean(hyp_lens)) if hyp_lens else 0.0
+    length_ratio = (avg_hyp / avg_ref) if avg_ref > 0 else 0.0
+
+    repetitive = 0
+    for h in txt_hyp:
+        toks = h.split()
+        if len(toks) >= 4:
+            uniq = len(set(toks))
+            if uniq / len(toks) < 0.5:
+                repetitive += 1
+
+    return {
+        'avg_ref_len': avg_ref,
+        'avg_hyp_len': avg_hyp,
+        'length_ratio': length_ratio,
+        'pct_empty': 100.0 * empty / n,
+        'pct_very_short': 100.0 * very_short / n,
+        'pct_repetitive': 100.0 * repetitive / n,
+    }
 
 def islr_performance(txt_ref, txt_hyp):
     true_sample = 0
