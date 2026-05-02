@@ -16,3 +16,18 @@ log/
 tools/*.jpg
 tools/*.mp4
 pre_training.py
+*.pkl
+*.pyc
+*.__pycache__
+
+# operational artifacts
+*.log
+*.pid
+.env
+temp.txt
+pretrained_weight/
+
+# venv / tooling
+.venv/
+.idea/
+.vscode/
