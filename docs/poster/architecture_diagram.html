@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Uni-Sign + PJM transfer learning — architecture</title>
+<style>
+ /* ----- editable theme ------------------------------------------------ */
+ :root {
+ /* neutral baseline (Uni-Sign backbone — adopted) */
+ --base-fill: #eef2f7;
+ --base-stroke: #6b7c93;
+ --base-text: #2b3a4a;
+
+ /* accent (this work — PJM adaptation) */
+ --acc-fill: #fff1e6;
+ --acc-stroke: #c9582b;
+ --acc-text: #5a2811;
+
+ /* secondary accent (eval) */
+ --eval-fill: #ecf7ee;
+ --eval-stroke: #2e7d4f;
+ --eval-text: #1c4a30;
+
+ --bg: #ffffff;
+ --ink: #1f2937;
+ --muted: #6b7280;
+
+ --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
+ --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+ }
+
+ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
+
+ .page {
+ width: 1400px; /* fits comfortably on A1 landscape; scale freely */
+ margin: 24px auto;
+ padding: 0 24px 32px;
+ }
+
+ h1 {
+ font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em;
+ }
+ .subtitle {
+ font-size: 16px; color: var(--muted); margin: 0 0 24px;
+ }
+
+ /* SVG-level styling lives inside the SVG; this is for surrounding HTML only */
+ .legend { display: flex; gap: 24px; align-items: center; margin: 0 0 16px; font-size: 13px; }
+ .legend .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 6px; border: 1.5px solid; }
+ .legend .base { background: var(--base-fill); border-color: var(--base-stroke); }
+ .legend .acc { background: var(--acc-fill); border-color: var(--acc-stroke); }
+ .legend .eval { background: var(--eval-fill); border-color: var(--eval-stroke); }
+
+ figcaption {
+ margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.5;
+ }
+ figcaption code { font-family: var(--font-mono); font-size: 11px; background: #f3f4f6; padding: 1px 4px; border-radius: 3px; color: var(--ink); }
+
+ /* print to PDF: landscape, no margins so SVG fills the page */
+ @media print {
+ @page { size: A1 landscape; margin: 0; }
+ body { background: white; }
+ .page { width: auto; margin: 0; padding: 16mm; }
+ }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Uni-Sign + PJM transfer learning</h1>
+<p class="subtitle">Three-phase adaptation of CSL-News pretrained Uni-Sign to Polish Sign Language with cross-lingual evaluation</p>
+
+<div class="legend">
+<span><span class="swatch base"></span>Uni-Sign backbone (adopted)</span>
+<span><span class="swatch acc"></span>PJM adaptation (this work)</span>
+<span><span class="swatch eval"></span>Evaluation</span>
+<span style="margin-left:auto; color:var(--muted); font-size:12px">🔒 frozen · 🔓 trainable LoRA adapters</span>
+</div>
+
+<figure style="margin:0">
+<svg viewBox="0 0 1400 840" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture diagram">
+<defs>
+<!-- arrow markers -->
+<marker id="arr-base" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 Z" style="fill: var(--base-stroke)"/>
+</marker>
+<marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 Z" style="fill: var(--acc-stroke)"/>
+</marker>
+<marker id="arr-eval" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 Z" style="fill: var(--eval-stroke)"/>
+</marker>
+
+<!-- reusable styles -->
+<style>
+ .box-base { fill: var(--base-fill); stroke: var(--base-stroke); stroke-width: 1.5; }
+ .box-acc { fill: var(--acc-fill); stroke: var(--acc-stroke); stroke-width: 1.8; }
+ .box-eval { fill: var(--eval-fill); stroke: var(--eval-stroke); stroke-width: 1.5; }
+ .lbl { font-family: var(--font-sans); font-size: 14px; font-weight: 600; }
+ .lbl-base { fill: var(--base-text); }
+ .lbl-acc { fill: var(--acc-text); }
+ .lbl-eval { fill: var(--eval-text); }
+ .sub { font-size: 11px; font-weight: 400; }
+ .section-title { font-family: var(--font-sans); font-size: 17px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+ .arrow-base { stroke: var(--base-stroke); stroke-width: 1.5; fill: none; }
+ .arrow-acc { stroke: var(--acc-stroke); stroke-width: 2; fill: none; }
+ .arrow-eval { stroke: var(--eval-stroke); stroke-width: 1.5; fill: none; }
+ .arrow-dash { stroke-dasharray: 6 4; }
+ .frame { fill: none; stroke-dasharray: 4 3; stroke-width: 1.2; }
+</style>
+</defs>
+
+<!-- =================== SECTION A: Uni-Sign backbone =================== -->
+<g id="section-A">
+<rect class="frame" x="20" y="40" width="600" height="780" rx="14" stroke="var(--base-stroke)"/>
+<text x="40" y="68" class="section-title lbl-base">A · Uni-Sign backbone (adopted)</text>
+
+<!-- inputs -->
+<rect class="box-base" x="60" y="100" width="200" height="58" rx="6"/>
+<text x="160" y="125" text-anchor="middle" class="lbl lbl-base">Keypoints sequence</text>
+<text x="160" y="143" text-anchor="middle" class="sub lbl-base">left/right hand · body · face</text>
+
+<rect class="box-base" x="380" y="100" width="200" height="58" rx="6"/>
+<text x="480" y="125" text-anchor="middle" class="lbl lbl-base">RGB clip</text>
+<text x="480" y="143" text-anchor="middle" class="sub lbl-base">few low-resolution frames</text>
+
+<!-- sub-pose split -->
+<rect class="box-base" x="60" y="190" width="200" height="40" rx="6"/>
+<text x="160" y="215" text-anchor="middle" class="lbl lbl-base">Divide into sub-poses</text>
+
+<!-- PGF + Pose Encoder -->
+<rect class="box-base" x="60" y="260" width="95" height="50" rx="6"/>
+<text x="107" y="282" text-anchor="middle" class="lbl lbl-base">PGF</text>
+<text x="107" y="297" text-anchor="middle" class="sub lbl-base">prior fusion</text>
+
+<rect class="box-base" x="165" y="260" width="95" height="50" rx="6"/>
+<text x="212" y="282" text-anchor="middle" class="lbl lbl-base">Pose Enc.</text>
+<text x="212" y="297" text-anchor="middle" class="sub lbl-base">×N sub-streams</text>
+
+<!-- Vision encoder -->
+<rect class="box-base" x="380" y="260" width="200" height="50" rx="6"/>
+<text x="480" y="282" text-anchor="middle" class="lbl lbl-base">Vision Encoder</text>
+<text x="480" y="297" text-anchor="middle" class="sub lbl-base">score-aware sampling</text>
+
+<!-- Temporal encoders row -->
+<rect class="box-base" x="60" y="340" width="125" height="50" rx="6"/>
+<text x="122" y="362" text-anchor="middle" class="lbl lbl-base">Temporal Enc.</text>
+<text x="122" y="378" text-anchor="middle" class="sub lbl-base">pose stream(s)</text>
+
+<rect class="box-base" x="200" y="340" width="125" height="50" rx="6"/>
+<text x="262" y="362" text-anchor="middle" class="lbl lbl-base">Temporal Enc.</text>
+<text x="262" y="378" text-anchor="middle" class="sub lbl-base">pose stream(s)</text>
+
+<rect class="box-base" x="380" y="340" width="200" height="50" rx="6"/>
+<text x="480" y="362" text-anchor="middle" class="lbl lbl-base">Temporal Encoder</text>
+<text x="480" y="378" text-anchor="middle" class="sub lbl-base">RGB stream</text>
+
+<!-- Feature concat -->
+<rect class="box-base" x="60" y="420" width="520" height="46" rx="6"/>
+<text x="320" y="448" text-anchor="middle" class="lbl lbl-base">Feature concatenation</text>
+
+<!-- LLM -->
+<rect class="box-base" x="60" y="500" width="520" height="78" rx="8"/>
+<text x="320" y="528" text-anchor="middle" class="lbl lbl-base">Pre-trained LLM (mT5-base)</text>
+<text x="320" y="548" text-anchor="middle" class="sub lbl-base">decoder generates target-language sentence</text>
+<text x="320" y="566" text-anchor="middle" class="sub lbl-base">target prompt: English (PJM annotations)</text>
+
+<!-- Output -->
+<rect class="box-base" x="60" y="610" width="520" height="46" rx="6"/>
+<text x="320" y="638" text-anchor="middle" class="lbl lbl-base">Predicted text → BLEU / BERTScore</text>
+
+<!-- arrows inside section A -->
+<path class="arrow-base" d="M160,158 L160,190" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M160,230 L160,260" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M160,310 L122,340" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M210,310 L262,340" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M480,158 L480,260" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M480,310 L480,340" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M122,390 L122,420" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M262,390 L262,420" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M480,390 L480,420" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M320,466 L320,500" marker-end="url(#arr-base)"/>
+<path class="arrow-base" d="M320,578 L320,610" marker-end="url(#arr-base)"/>
+
+<!-- attribution -->
+<text x="40" y="800" class="sub" fill="var(--muted)">
+ Backbone topology adopted from Uni-Sign [Li et al., 2025, arXiv:2501.15187].
+</text>
+</g>
+
+<!-- =================== SECTION B: PJM transfer learning =================== -->
+<g id="section-B" transform="translate(640,0)">
+<rect class="frame" x="20" y="40" width="500" height="500" rx="14" stroke="var(--acc-stroke)"/>
+<text x="40" y="68" class="section-title lbl-acc">B · PJM transfer learning (this work)</text>
+
+<!-- starting checkpoint -->
+<rect class="box-base" x="50" y="100" width="440" height="46" rx="6"/>
+<text x="270" y="125" text-anchor="middle" class="lbl lbl-base">CSL-News pretrained checkpoint (1985 h)</text>
+<text x="270" y="140" text-anchor="middle" class="sub lbl-base">starting point — released by Uni-Sign authors</text>
+
+<!-- Phase 1 -->
+<rect class="box-acc" x="50" y="180" width="440" height="64" rx="6"/>
+<text x="60" y="202" class="lbl lbl-acc">Phase 1 · Zero-shot evaluation</text>
+<text x="60" y="220" class="sub lbl-acc">Inference on PJM dev set, no training. Target prompt = English.</text>
+<text x="60" y="234" class="sub lbl-acc">Establishes BLEU floor — measures cross-language transferability.</text>
+<text x="478" y="218" text-anchor="end" font-size="13" fill="var(--acc-text)">🔒 all frozen</text>
+
+<!-- Phase 2 -->
+<rect class="box-acc" x="50" y="260" width="440" height="84" rx="6"/>
+<text x="60" y="282" class="lbl lbl-acc">Phase 2 · LoRA fine-tune on mT5 decoder</text>
+<text x="60" y="300" class="sub lbl-acc">Inject LoRA (rank 16–32) into q_proj, v_proj of decoder attention.</text>
+<text x="60" y="314" class="sub lbl-acc">Visual encoder + PGF kept frozen. ~10–30 epochs on PJM train.</text>
+<text x="60" y="330" class="sub lbl-acc">Splits: Multi-Speaker (MS) and Signer-Independent (SI).</text>
+<text x="478" y="282" text-anchor="end" font-size="13" fill="var(--acc-text)">🔒 visual · 🔓 decoder</text>
+
+<!-- Phase 3 -->
+<rect class="box-acc" x="50" y="360" width="440" height="84" rx="6"/>
+<text x="60" y="382" class="lbl lbl-acc">Phase 3 · Full fine-tune (visual + decoder)</text>
+<text x="60" y="400" class="sub lbl-acc">Unfreeze visual encoder with 10× smaller LR than decoder.</text>
+<text x="60" y="414" class="sub lbl-acc">Largest expected gain; overfit risk on ~150 signers (regularize).</text>
+<text x="60" y="430" class="sub lbl-acc">Best checkpoint exported for cross-lingual evaluation (Section C).</text>
+<text x="478" y="382" text-anchor="end" font-size="13" fill="var(--acc-text)">🔓 all trainable</text>
+
+<!-- Phase 4 (optional) -->
+<rect class="box-acc" x="50" y="460" width="440" height="60" rx="6" opacity="0.55"/>
+<text x="60" y="482" class="lbl lbl-acc">Phase 4 · Continue-pretrain on PJM (optional)</text>
+<text x="60" y="500" class="sub lbl-acc">Pose-text alignment stage on PJM before SLT fine-tune.</text>
+<text x="60" y="514" class="sub lbl-acc">Pipeline: CSL-News → PJM-pretrain → PJM-SLT.</text>
+
+<!-- arrows -->
+<path class="arrow-acc" d="M270,146 L270,180" marker-end="url(#arr-acc)"/>
+<path class="arrow-acc" d="M270,244 L270,260" marker-end="url(#arr-acc)"/>
+<path class="arrow-acc" d="M270,344 L270,360" marker-end="url(#arr-acc)"/>
+<path class="arrow-acc arrow-dash" d="M270,444 L270,460" marker-end="url(#arr-acc)"/>
+</g>
+
+<!-- =================== SECTION C: Cross-lingual eval =================== -->
+<g id="section-C" transform="translate(640,560)">
+<rect class="frame" x="20" y="0" width="500" height="260" rx="14" stroke="var(--eval-stroke)"/>
+<text x="40" y="28" class="section-title lbl-eval">C · Cross-lingual evaluation</text>
+
+<rect class="box-eval" x="50" y="60" width="135" height="76" rx="6"/>
+<text x="117" y="86" text-anchor="middle" class="lbl lbl-eval">PJM</text>
+<text x="117" y="104" text-anchor="middle" class="sub lbl-eval">in-distribution</text>
+<text x="117" y="120" text-anchor="middle" class="sub lbl-eval">dev / test</text>
+
+<rect class="box-eval" x="202" y="60" width="135" height="76" rx="6"/>
+<text x="270" y="86" text-anchor="middle" class="lbl lbl-eval">How2Sign</text>
+<text x="270" y="104" text-anchor="middle" class="sub lbl-eval">ASL → English</text>
+<text x="270" y="120" text-anchor="middle" class="sub lbl-eval">zero-shot</text>
+
+<rect class="box-eval" x="354" y="60" width="135" height="76" rx="6"/>
+<text x="422" y="86" text-anchor="middle" class="lbl lbl-eval">OpenASL</text>
+<text x="422" y="104" text-anchor="middle" class="sub lbl-eval">ASL → English</text>
+<text x="422" y="120" text-anchor="middle" class="sub lbl-eval">zero-shot</text>
+
+<text x="270" y="170" text-anchor="middle" class="sub" fill="var(--ink)">
+ Metrics: BLEU-{1..4}, chrF, BERTScore F1
+</text>
+<text x="270" y="192" text-anchor="middle" class="sub" fill="var(--muted)">
+ Tests whether PJM-tuned visual features transfer across sign languages without further training.
+</text>
+</g>
+
+<!-- ============== inter-section arrows ============== -->
+<!-- Section A backbone reused as input to Section B -->
+<path class="arrow-base arrow-dash"
+ d="M620,120 C 640,120 640,123 660,123"
+ marker-end="url(#arr-base)"/>
+<text x="635" y="115" class="sub" fill="var(--muted)">re-use weights</text>
+
+<!-- Phase 3 → Section C -->
+<path class="arrow-acc"
+ d="M910,540 L910,560 L660,560 L660,640"
+ marker-end="url(#arr-acc)"/>
+<text x="700" y="555" class="sub" fill="var(--acc-text)">best ckpt</text>
+
+</svg>
+</figure>
+
+<figcaption>
+<strong>Figure.</strong> Three-phase transfer-learning pipeline adapting Uni-Sign to Polish Sign Language (PJM)
+ and evaluating cross-lingual generalization to American Sign Language corpora.
+ Backbone topology (Section A) is adopted from Uni-Sign; the PJM adaptation protocol (Section B) and
+ cross-lingual evaluation (Section C) are contributions of this work.
+ LoRA adapters ( ) inject low-rank updates into<code>q_proj</code> /<code>v_proj</code> of the mT5 decoder
+ while keeping the visual encoder frozen in Phase 2; Phase 3 unfreezes the encoder with a reduced learning rate.
+ Reference: Li, Z. et al.,<em>Uni-Sign: Toward Unified Sign Language Understanding at Scale</em>,
+ arXiv:2501.15187, 2025.
+</figcaption>
+
+</div>
+</body>
+</html>

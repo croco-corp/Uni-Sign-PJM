@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Architecture comparison — SpaMo, mod-SpaMo, Uni-Sign + PJM</title>
+<style>
+ /* ----- editable theme -------------------------------------------------- */
+ :root {
+ /* neutral baseline (third-party / paper architectures) */
+ --base-fill: #eef2f7;
+ --base-stroke: #6b7c93;
+ --base-text: #2b3a4a;
+
+ /* accent (this work) */
+ --acc-fill: #fff1e6;
+ --acc-stroke: #c9582b;
+ --acc-text: #5a2811;
+
+ /* shared paradigm header */
+ --tpl-fill: #f4f6fa;
+ --tpl-stroke: #4b5b6e;
+ --tpl-text: #1f2937;
+
+ /* status badges */
+ --wip-bg: #fff7d6;
+ --wip-border: #d99a00;
+ --wip-text: #6b4d00;
+
+ --bg: #ffffff;
+ --ink: #1f2937;
+ --muted: #6b7280;
+
+ --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
+ --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+ }
+
+ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
+
+ .page {
+ width: 1500px;
+ margin: 24px auto;
+ padding: 0 24px 32px;
+ }
+
+ h1 {
+ font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em;
+ }
+ .subtitle {
+ font-size: 16px; color: var(--muted); margin: 0 0 24px;
+ }
+
+ /* ----- top abstract pipeline (SVG) ------------------------------------- */
+ .pipeline {
+ width: 100%;
+ margin: 8px 0 28px;
+ }
+
+ /* ----- comparison grid ------------------------------------------------- */
+ .grid {
+ display: grid;
+ grid-template-columns: 180px repeat(3, 1fr);
+ gap: 0;
+ border: 1px solid #e5e7eb;
+ border-radius: 8px;
+ overflow: hidden;
+ background: white;
+ }
+
+ .grid > * {
+ padding: 14px 16px;
+ border-bottom: 1px solid #e5e7eb;
+ border-right: 1px solid #e5e7eb;
+ font-size: 13.5px;
+ line-height: 1.5;
+ }
+ .grid > *:nth-child(4n) { border-right: none; }
+ .grid > *:nth-last-child(-n+4) { border-bottom: none; }
+
+ /* row labels (left column) */
+ .row-label {
+ background: #f9fafb;
+ font-weight: 700;
+ font-size: 12px;
+ letter-spacing: 0.04em;
+ text-transform: uppercase;
+ color: var(--muted);
+ display: flex;
+ align-items: center;
+ }
+
+ /* column headers */
+ .col-head {
+ font-weight: 700;
+ font-size: 15px;
+ padding: 16px;
+ border-bottom: 2px solid currentColor !important;
+ }
+ .col-head .name { display: block; }
+ .col-head .meta { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+ .col-base { background: var(--base-fill); color: var(--base-text); }
+ .col-acc { background: var(--acc-fill); color: var(--acc-text); }
+
+ .badge {
+ display: inline-block;
+ font-size: 10.5px;
+ font-weight: 700;
+ text-transform: uppercase;
+ letter-spacing: 0.06em;
+ padding: 2px 7px;
+ border-radius: 3px;
+ margin-left: 6px;
+ vertical-align: middle;
+ }
+ .badge-this { background: var(--acc-stroke); color: white; }
+ .badge-wip { background: var(--wip-bg); color: var(--wip-text); border: 1px solid var(--wip-border); }
+ .badge-ref { background: var(--base-stroke); color: white; }
+
+ code {
+ font-family: var(--font-mono);
+ font-size: 12px;
+ background: #f3f4f6;
+ padding: 1px 5px;
+ border-radius: 3px;
+ color: var(--ink);
+ }
+
+ ul.tight { margin: 0; padding-left: 18px; }
+ ul.tight li { margin: 1px 0; }
+
+ figcaption {
+ margin-top: 18px;
+ font-size: 12px;
+ color: var(--muted);
+ line-height: 1.55;
+ max-width: 1100px;
+ }
+
+ /* legend strip */
+ .legend {
+ display: flex;
+ gap: 22px;
+ align-items: center;
+ margin: 0 0 16px;
+ font-size: 13px;
+ flex-wrap: wrap;
+ }
+ .legend .swatch {
+ display: inline-block; width: 14px; height: 14px;
+ border-radius: 3px; vertical-align: middle; margin-right: 6px;
+ border: 1.5px solid;
+ }
+ .legend .base { background: var(--base-fill); border-color: var(--base-stroke); }
+ .legend .acc { background: var(--acc-fill); border-color: var(--acc-stroke); }
+
+ /* print to PDF */
+ @media print {
+ @page { size: A1 landscape; margin: 0; }
+ body { background: white; }
+ .page { width: auto; margin: 0; padding: 16mm; }
+ }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Architecture comparison</h1>
+<p class="subtitle">Three SLT architectures aligned on a common pipeline; module-level mapping highlights the contribution of this work.</p>
+
+<div class="legend">
+<span><span class="swatch base"></span>Reference architecture (third-party / paper)</span>
+<span><span class="swatch acc"></span>This work</span>
+<span style="color:var(--muted)">❄ frozen · 🔥 trained ongoing</span>
+</div>
+
+<!-- =================== TOP: abstract pipeline =================== -->
+<svg class="pipeline" viewBox="0 0 1450 170" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Common SLT pipeline">
+<defs>
+<marker id="arr-tpl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 Z" style="fill: var(--tpl-stroke)"/>
+</marker>
+<style>
+ .tpl-box { fill: var(--tpl-fill); stroke: var(--tpl-stroke); stroke-width: 1.8; }
+ .tpl-lbl { font-family: var(--font-sans); font-size: 16px; font-weight: 700; fill: var(--tpl-text); }
+ .tpl-sub { font-family: var(--font-sans); font-size: 11.5px; font-weight: 400; fill: var(--muted); }
+ .tpl-arrow { stroke: var(--tpl-stroke); stroke-width: 2; fill: none; }
+ .tpl-title { font-family: var(--font-sans); font-size: 13px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; fill: var(--muted); }
+</style>
+</defs>
+
+<text x="20" y="22" class="tpl-title">Common paradigm</text>
+
+<!-- 5 boxes -->
+<rect class="tpl-box" x="20" y="50" width="220" height="80" rx="8"/>
+<text x="130" y="84" text-anchor="middle" class="tpl-lbl">Video clip</text>
+<text x="130" y="105" text-anchor="middle" class="tpl-sub">RGB frames + (optional)</text>
+<text x="130" y="119" text-anchor="middle" class="tpl-sub">keypoints / pose</text>
+
+<rect class="tpl-box" x="290" y="50" width="240" height="80" rx="8"/>
+<text x="410" y="80" text-anchor="middle" class="tpl-lbl">Frozen encoders</text>
+<text x="410" y="100" text-anchor="middle" class="tpl-sub">❄ visual / pose feature</text>
+<text x="410" y="115" text-anchor="middle" class="tpl-sub">extractors (pre-trained, fixed)</text>
+
+<rect class="tpl-box" x="580" y="50" width="240" height="80" rx="8"/>
+<text x="700" y="80" text-anchor="middle" class="tpl-lbl">Fusion module</text>
+<text x="700" y="100" text-anchor="middle" class="tpl-sub">🔥 trained from scratch</text>
+<text x="700" y="115" text-anchor="middle" class="tpl-sub">multi-stream → token sequence</text>
+
+<rect class="tpl-box" x="870" y="50" width="320" height="80" rx="8"/>
+<text x="1030" y="80" text-anchor="middle" class="tpl-lbl">LLM decoder</text>
+<text x="1030" y="100" text-anchor="middle" class="tpl-sub">🔥 fine-tuned (LoRA / full)</text>
+<text x="1030" y="115" text-anchor="middle" class="tpl-sub">T5 / mT5 family</text>
+
+<rect class="tpl-box" x="1240" y="50" width="190" height="80" rx="8"/>
+<text x="1335" y="84" text-anchor="middle" class="tpl-lbl">Text output</text>
+<text x="1335" y="105" text-anchor="middle" class="tpl-sub">target-language</text>
+<text x="1335" y="119" text-anchor="middle" class="tpl-sub">translation</text>
+
+<!-- arrows -->
+<path class="tpl-arrow" d="M242,90 L288,90" marker-end="url(#arr-tpl)"/>
+<path class="tpl-arrow" d="M532,90 L578,90" marker-end="url(#arr-tpl)"/>
+<path class="tpl-arrow" d="M822,90 L868,90" marker-end="url(#arr-tpl)"/>
+<path class="tpl-arrow" d="M1192,90 L1238,90" marker-end="url(#arr-tpl)"/>
+
+<!-- training-state strip -->
+<text x="130" y="155" text-anchor="middle" class="tpl-sub" style="font-style:italic">input</text>
+<text x="410" y="155" text-anchor="middle" class="tpl-sub" style="font-style:italic">❄ frozen</text>
+<text x="700" y="155" text-anchor="middle" class="tpl-sub" style="font-style:italic">🔥 trained</text>
+<text x="1030" y="155" text-anchor="middle" class="tpl-sub" style="font-style:italic">🔥 fine-tuned</text>
+<text x="1335" y="155" text-anchor="middle" class="tpl-sub" style="font-style:italic">prediction</text>
+</svg>
+
+<!-- =================== BOTTOM: 3-column comparison =================== -->
+<div class="grid">
+
+<!-- ----- header row ----- -->
+<div class="row-label" style="background:white; border-bottom-color:transparent"></div>
+<div class="col-head col-base">
+<span class="name">SpaMo</span>
+<span class="meta">paper-faithful baseline · Wang et al., 2024<span class="badge badge-ref">ref.</span></span>
+</div>
+<div class="col-head col-acc">
+<span class="name">mod-SpaMo</span>
+<span class="meta">extended SpaMo<span class="badge badge-this">this work</span><span class="badge badge-wip"> wip</span></span>
+</div>
+<div class="col-head col-acc">
+<span class="name">Uni-Sign + PJM</span>
+<span class="meta">cross-language transfer<span class="badge badge-this">this work</span></span>
+</div>
+
+<!-- ----- Encoders ----- -->
+<div class="row-label">Encoders<br><span style="font-weight:400; text-transform:none; letter-spacing:0; font-size:11px; color:var(--muted)">(frozen)</span></div>
+<div>
+<ul class="tight">
+<li><strong>Dual streams</strong></li>
+<li>ViT (full-frame)</li>
+<li>MAE (motion features)</li>
+</ul>
+<div style="font-size:11px; color:var(--muted); margin-top:6px">offline pre-extraction</div>
+</div>
+<div>
+<ul class="tight">
+<li><strong>Quad streams</strong></li>
+<li>ViT (full-frame)</li>
+<li>MAE (motion)</li>
+<li>hand-ViT (hand crops)</li>
+<li>MediaPipe (keypoints)</li>
+</ul>
+<div style="font-size:11px; color:var(--muted); margin-top:6px">offline pre-extraction</div>
+</div>
+<div>
+<ul class="tight">
+<li><strong>Pose + RGB</strong></li>
+<li>Sub-pose split (hands · body · face)</li>
+<li>RGB clip (low-res, score-aware sampling)</li>
+<li>PGF — prior-guided fusion of pose streams</li>
+</ul>
+<div style="font-size:11px; color:var(--muted); margin-top:6px">end-to-end (Phase 3 unfreezes)</div>
+</div>
+
+<!-- ----- Fusion ----- -->
+<div class="row-label">Fusion<br><span style="font-weight:400; text-transform:none; letter-spacing:0; font-size:11px; color:var(--muted)">(trained)</span></div>
+<div>
+<ul class="tight">
+<li>Joint multi-stream fusion</li>
+<li>Cross-modal alignment loss</li>
+<li>In-context examples (3 retrieved)</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>Joint fusion +<strong>dropout</strong></li>
+<li>Cross-modal alignment loss</li>
+<li>In-context examples (3 retrieved)</li>
+<li><em>ongoing architectural tweaks</em></li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>Per-stream temporal encoders</li>
+<li>Feature concatenation</li>
+<li>No auxiliary alignment loss</li>
+</ul>
+</div>
+
+<!-- ----- LLM ----- -->
+<div class="row-label">Decoder<br><span style="font-weight:400; text-transform:none; letter-spacing:0; font-size:11px; color:var(--muted)">(fine-tuned)</span></div>
+<div>
+<ul class="tight">
+<li><code>FlanT5-xl</code> (3 B)</li>
+<li>LoRA r=16, α=32</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li><code>FlanT5-xl</code> (3 B)</li>
+<li>LoRA r=16, α=32</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li><code>mT5-base</code> (580 M)</li>
+<li>LoRA on decoder (Phase 2)</li>
+<li>Full fine-tune (Phase 3)</li>
+</ul>
+</div>
+
+<!-- ----- Training corpus ----- -->
+<div class="row-label">Training corpus</div>
+<div>
+<ul class="tight">
+<li>PHOENIX-2014T (DGS → German)</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>PHOENIX-2014T (DGS → German)</li>
+<li>+ ablations on stream count</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>Pretrain: CSL-News (1985 h, CSL → Chinese)</li>
+<li>Fine-tune: PJM (Polish → English)</li>
+<li>Splits: Multi-Speaker (MS), Signer-Independent (SI)</li>
+</ul>
+</div>
+
+<!-- ----- Evaluation ----- -->
+<div class="row-label">Evaluation</div>
+<div>
+<ul class="tight">
+<li>PHOENIX-2014T dev / test</li>
+<li>BLEU-{1..4}, BERTScore F1</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>PHOENIX-2014T dev / test</li>
+<li>BLEU-{1..4}, BERTScore F1</li>
+<li>Stream-ablation deltas</li>
+</ul>
+</div>
+<div>
+<ul class="tight">
+<li>PJM dev / test (in-distribution)</li>
+<li>How2Sign zero-shot (cross-lingual)</li>
+<li>OpenASL zero-shot (cross-lingual)</li>
+</ul>
+</div>
+
+</div>
+
+<figcaption>
+<strong>Figure.</strong> Module-level alignment of the three architectures studied in this work onto a common
+ encoder–fusion–decoder paradigm. Frozen feature extractors and a fine-tuned LLM decoder are shared design
+ choices; the architectures differ in stream composition, fusion strategy, and target sign-language corpus.
+<em>SpaMo</em> serves as the reproduced paper-faithful baseline;<em>mod-SpaMo</em> extends it with
+ additional hand-crop and keypoint streams plus fusion-level dropout (architecture still being tuned);
+<em>Uni-Sign + PJM</em> probes whether a Chinese-pretrained backbone transfers to a low-resource target
+ (Polish Sign Language with English glosses) and generalises cross-lingually to ASL corpora.
+ SpaMo backbone follows Wang et al. (2024); Uni-Sign backbone follows Li et al. (2025, arXiv:2501.15187).
+</figcaption>
+
+</div>
+</body>
+</html>
